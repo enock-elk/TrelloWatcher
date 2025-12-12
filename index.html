@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>TrelloWatcher</title>
     
-    <!-- PWA & ICON LINKS (Updated for better support) -->
+    <!-- PWA & ICON LINKS -->
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
     <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -14,7 +14,6 @@
 
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
     <style>
-        /* ... (Rest of your CSS remains identical) ... */
         :root {
             --bg-color: #0f172a;
             --card-bg: rgba(30, 41, 59, 0.85);
@@ -185,7 +184,6 @@
             justify-content: space-between;
             align-items: center;
             width: 100%;
-            margin-bottom: 0px;
         }
 
         .status-badge {
@@ -908,9 +906,22 @@
             initAppWithToken();
         }
 
-        // Service Worker
+        // Service Worker Registration
         if ('serviceWorker' in navigator) {
-          navigator.serviceWorker.register('./sw.js').catch(console.error);
+          navigator.serviceWorker.register('./sw.js')
+            .then(reg => {
+                console.log('SW Registered', reg);
+                reg.onupdatefound = () => {
+                   const installingWorker = reg.installing;
+                   installingWorker.onstatechange = () => {
+                     if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                       // New content is available; force refresh if needed or just log
+                       console.log("New content available");
+                     }
+                   };
+                };
+            })
+            .catch(console.error);
         }
     };
 
@@ -961,7 +972,6 @@
             await fetchBoards(); 
         } catch (e) { 
             log("Init Error: " + e.message, true);
-            // If 401 Unauthorized, force logout
             if(e.message.includes('401') || e.message.includes('Unauthorized')) {
                 handleLogout();
                 showMessage("Session Expired", "Your Trello session expired. Please log in again.");
@@ -1035,6 +1045,9 @@
 
     // --- MONITORING LOGIC ---
     async function startMonitoring() {
+        // --- KEY FIX 1: Prevent Double-Intervals ---
+        if (intervalId) clearInterval(intervalId);
+        
         const boardId = document.getElementById('boardSelect').value;
         const checkboxes = document.querySelectorAll('input[name="bucket"]:checked');
 
@@ -1166,9 +1179,18 @@
         if (customAudioSource) {
             customAudio = new Audio(customAudioSource);
             customAudio.loop = loop; 
-            customAudio.play().catch(e => {
-                if (e.name !== 'AbortError') playSynth(loop);
-            });
+            
+            // --- KEY FIX 2: Silently handle "Interrupted" errors ---
+            const playPromise = customAudio.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(e => {
+                    // AbortError is normal when stopping/starting rapidly. Ignore it.
+                    if (e.name === 'AbortError') return;
+                    
+                    log("Audio Failed: " + e.message, true);
+                    playSynth(loop);
+                });
+            }
             return;
         }
         playSynth(loop);
@@ -1285,6 +1307,12 @@
         if (alertMode === 'wake') localStorage.setItem(PREF_TONE_WAKE, value);
         else localStorage.setItem(PREF_TONE_NOTIFY, value);
         updateToneUI(value);
+        
+        // PRELOAD / CHECK SOUND
+        if(value !== 'default' && value !== 'custom') {
+            const tempAudio = new Audio(value);
+            tempAudio.load(); // Forces browser to fetch it now
+        }
     }
 
     function updateToneUI(value) {
