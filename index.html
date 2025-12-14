@@ -837,10 +837,97 @@
     const PREF_TONE_WAKE = 'watcher_tone_wake';
     const PREF_TONE_NOTIFY = 'watcher_tone_notify';
 
+    // --- WORKER CODE (INLINED FOR SINGLE FILE) ---
+    // Fix #1: Moving polling logic to a Worker to avoid background throttling
+    const WORKER_SCRIPT_CONTENT = `
+        let intervalId = null;
+        let listStates = {}; 
+        let apiKey = '';
+        let token = '';
+
+        self.onmessage = async function(e) {
+            const { cmd, payload } = e.data;
+            if (cmd === 'start') {
+                apiKey = payload.apiKey;
+                token = payload.token;
+                const targets = payload.targets;
+                
+                // Clear old state just in case
+                if (intervalId) clearInterval(intervalId);
+                
+                startLoop(targets);
+            } else if (cmd === 'stop') {
+                if (intervalId) clearInterval(intervalId);
+                intervalId = null;
+                listStates = {};
+            }
+        };
+
+        async function trelloFetch(url) {
+            const response = await fetch(url + '?key=' + apiKey + '&token=' + token);
+            if (response.status === 401) throw new Error('Unauthorized');
+            if (!response.ok) throw new Error('API Error');
+            return await response.json();
+        }
+
+        async function startLoop(targets) {
+            // Initial Fetch to populate "seen" cards
+            let totalCards = 0;
+            for (const target of targets) {
+                try {
+                    const cards = await trelloFetch('https://api.trello.com/1/lists/' + target.id + '/cards');
+                    listStates[target.id] = new Set(cards.map(c => c.id));
+                    totalCards += cards.length;
+                } catch(e) {
+                    postMessage({ type: 'error', msg: e.message });
+                    if(e.message === 'Unauthorized') postMessage({ type: 'auth_fail' });
+                }
+            }
+            postMessage({ type: 'stats', total: totalCards });
+            postMessage({ type: 'log', msg: 'Worker started monitoring ' + targets.length + ' lists.' });
+
+            // Start Polling Loop
+            intervalId = setInterval(async () => {
+                let currentTotal = 0;
+                for (const target of targets) {
+                    try {
+                        const cards = await trelloFetch('https://api.trello.com/1/lists/' + target.id + '/cards');
+                        const currentSet = new Set(cards.map(c => c.id));
+                        const previousSet = listStates[target.id] || new Set();
+                        
+                        // Find new cards
+                        const newCards = cards.filter(c => !previousSet.has(c.id));
+                        
+                        // Update state
+                        listStates[target.id] = currentSet;
+                        currentTotal += currentSet.size;
+
+                        if (newCards.length > 0) {
+                            // Notify Main Thread
+                            postMessage({ 
+                                type: 'alarm', 
+                                cardName: newCards[0].name, 
+                                listName: target.name 
+                            });
+                            // We only trigger one alarm per cycle to avoid chaos
+                            break; 
+                        }
+                    } catch(e) {
+                         if(e.message === 'Unauthorized') {
+                             clearInterval(intervalId);
+                             postMessage({ type: 'auth_fail' });
+                             return;
+                         }
+                    }
+                }
+                postMessage({ type: 'stats', total: currentTotal });
+            }, 15000); 
+        }
+    `;
+
     // --- STATE VARIABLES ---
     let userToken = null;
-    let intervalId = null;
-    let listStates = {}; 
+    let worker = null; // Web Worker Instance
     let isAlarmPlaying = false;
     let isTesting = false; 
     let audioCtx = null;
@@ -908,15 +995,17 @@
 
         // Service Worker Registration
         if ('serviceWorker' in navigator) {
+          // Fix #5: Better update handling logic for SW
           navigator.serviceWorker.register('./sw.js')
             .then(reg => {
-                console.log('SW Registered', reg);
+                console.log('SW Registered');
                 reg.onupdatefound = () => {
                    const installingWorker = reg.installing;
                    installingWorker.onstatechange = () => {
                      if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                       // New content is available; force refresh if needed or just log
-                       console.log("New content available");
+                       log("New update available. Refresh to apply.", false);
+                       // Optional: Force reload if critical
+                       // window.location.reload(); 
                      }
                    };
                 };
@@ -979,8 +1068,8 @@
         }
     }
 
-    // --- TRELLO API ---
-    async function trelloFetch(url) {
+    // --- TRELLO API (Initial Setup only - monitoring uses Worker) ---
+    async function trelloFetchMain(url) {
         if (!userToken) throw new Error("No Token");
         const response = await fetch(`${url}?key=${API_KEY}&token=${userToken}`);
         if (response.status === 401) throw new Error('Unauthorized');
@@ -989,7 +1078,7 @@
     }
 
     async function fetchBoards() {
-        const boards = await trelloFetch('https://api.trello.com/1/members/me/boards');
+        const boards = await trelloFetchMain('https://api.trello.com/1/members/me/boards');
         const boardSelect = document.getElementById('boardSelect');
         boardSelect.innerHTML = '<option value="">-- Choose a Board --</option>';
         
@@ -1025,7 +1114,7 @@
         const boardId = document.getElementById('boardSelect').value;
         if (!boardId) return;
         
-        const lists = await trelloFetch(`https://api.trello.com/1/boards/${boardId}/lists`);
+        const lists = await trelloFetchMain(`https://api.trello.com/1/boards/${boardId}/lists`);
         const container = document.getElementById('listCheckboxes');
         container.innerHTML = '';
 
@@ -1045,9 +1134,6 @@
 
     // --- MONITORING LOGIC ---
     async function startMonitoring() {
-        // --- KEY FIX 1: Prevent Double-Intervals ---
-        if (intervalId) clearInterval(intervalId);
-        
         const boardId = document.getElementById('boardSelect').value;
         const checkboxes = document.querySelectorAll('input[name="bucket"]:checked');
 
@@ -1059,77 +1145,68 @@
         if (!audioCtx) audioCtx = new AudioContext();
         if (audioCtx.state === 'suspended') await audioCtx.resume();
         
+        // Fix #2: Request Notification Permission
+        if ("Notification" in window && Notification.permission !== "granted") {
+            Notification.requestPermission();
+        }
+
         showVolumeCheck();
         requestWakeLock();
 
         const targets = Array.from(checkboxes).map(cb => ({ id: cb.value, name: cb.getAttribute('data-name') }));
-        listStates = {};
-        let totalCards = 0;
 
         setupSection.classList.add('hidden');
         monitorSection.classList.remove('hidden');
         document.body.classList.add('monitoring-active');
         
+        // Fix #3: Safe Inner Text Rendering (Prevents XSS)
         const container = document.getElementById('watchedListContainer');
-        container.innerHTML = targets.map(t => t.name).join(' & '); 
-
-        // Initial State Capture
-        for (const target of targets) {
-            try {
-                const cards = await trelloFetch(`https://api.trello.com/1/lists/${target.id}/cards`);
-                listStates[target.id] = new Set(cards.map(c => c.id));
-                totalCards += cards.length;
-            } catch (e) {
-                log("Initial Fetch Error: " + e.message, true);
-                if(e.message === 'Unauthorized') { handleLogout(); return; }
+        container.innerHTML = ''; 
+        targets.forEach((t, index) => {
+            const span = document.createElement('span');
+            span.innerText = t.name;
+            container.appendChild(span);
+            if (index < targets.length - 1) {
+                container.appendChild(document.createTextNode(' & '));
             }
-        }
-        document.getElementById('totalCards').innerText = totalCards;
+        });
+
+        // Initialize Web Worker from Blob
+        const blob = new Blob([WORKER_SCRIPT_CONTENT], {type: 'application/javascript'});
+        worker = new Worker(URL.createObjectURL(blob));
+        
+        // Set up Worker Listeners
+        worker.onmessage = (e) => {
+            const data = e.data;
+            if (data.type === 'log') log(data.msg);
+            else if (data.type === 'error') log("Error: " + data.msg, true);
+            else if (data.type === 'auth_fail') { stopMonitoring(); handleLogout(); }
+            else if (data.type === 'stats') { document.getElementById('totalCards').innerText = data.total; }
+            else if (data.type === 'alarm') {
+                if (soundToggleActive.checked && !isAlarmPlaying) {
+                    triggerAlarm(data.cardName, data.listName);
+                }
+            }
+        };
+
+        // Start Worker
+        worker.postMessage({ 
+            cmd: 'start', 
+            payload: { apiKey: API_KEY, token: userToken, targets: targets }
+        });
+
         log(`Started monitoring: ${targets.map(t => t.name).join(', ')}`);
-
-        intervalId = setInterval(() => checkAllLists(targets), 15000); 
-    }
-
-    async function checkAllLists(targets) {
-        if (isAlarmPlaying) return; 
-        if (!wakeLock && document.visibilityState === 'visible') requestWakeLock();
-
-        let totalCardsCurrent = 0;
-        for (const target of targets) {
-            try {
-                const cards = await trelloFetch(`https://api.trello.com/1/lists/${target.id}/cards`);
-                const currentSet = new Set(cards.map(c => c.id));
-                const previousSet = listStates[target.id] || new Set();
-                const newCards = cards.filter(c => !previousSet.has(c.id));
-
-                listStates[target.id] = currentSet;
-                totalCardsCurrent += currentSet.size;
-
-                if (newCards.length > 0) {
-                    if (soundToggleActive.checked) {
-                        triggerAlarm(newCards[0].name, target.name);
-                        return; 
-                    }
-                }
-            } catch (e) {
-                if(e.message === 'Unauthorized') {
-                    clearInterval(intervalId);
-                    handleLogout();
-                    return;
-                }
-                log(`Connection Error [${target.name}]: ${e.message}`, true);
-            }
-        }
-        document.getElementById('totalCards').innerText = totalCardsCurrent;
     }
 
     function stopMonitoring() {
-        if (intervalId) clearInterval(intervalId);
-        intervalId = null;
+        if (worker) {
+            worker.postMessage({ cmd: 'stop' });
+            worker.terminate();
+            worker = null;
+        }
         monitorSection.classList.add('hidden');
         setupSection.classList.remove('hidden');
         document.body.classList.remove('monitoring-active');
-        listStates = {};
         if (wakeLock) { wakeLock.release().then(() => { wakeLock = null; }); }
         log("Monitoring stopped.");
     }
@@ -1147,6 +1224,18 @@
         document.getElementById('newCardName').innerText = cardName;
         document.getElementById('alarmListName').innerText = listName;
         log(`ALARM: New card in ${listName}`);
+
+        // Fix #2 (Execution): Native Notification
+        if ("Notification" in window && Notification.permission === "granted" && document.visibilityState !== "visible") {
+            try {
+                new Notification("Trello Alert!", {
+                    body: `New card in ${listName}: ${cardName}`,
+                    icon: 'icons/icon-192.png',
+                    tag: 'trello-alert',
+                    renotify: true
+                });
+            } catch(e) { console.log("Notification failed", e); }
+        }
 
         if (navigator.vibrate) {
             if(alertMode === 'wake') navigator.vibrate([500, 200, 500, 200, 1000]);
@@ -1176,17 +1265,22 @@
 
     function playAudio(loop) {
         stopSoundOnly();
+
+        // Fix #4: Resurrection of Suspended AudioContext
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume().then(() => {
+               // resumed
+            });
+        }
+
         if (customAudioSource) {
             customAudio = new Audio(customAudioSource);
             customAudio.loop = loop; 
             
-            // --- KEY FIX 2: Silently handle "Interrupted" errors ---
             const playPromise = customAudio.play();
             if (playPromise !== undefined) {
                 playPromise.catch(e => {
-                    // AbortError is normal when stopping/starting rapidly. Ignore it.
                     if (e.name === 'AbortError') return;
-                    
                     log("Audio Failed: " + e.message, true);
                     playSynth(loop);
                 });
@@ -1198,6 +1292,9 @@
 
     function playSynth(loop) {
         try {
+            // Fix #4 (Backup): Resurrection in Synth
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
             oscillator = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain(); 
             oscillator.connect(gainNode); 

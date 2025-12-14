@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trello-watcher-v10'; // Bumped to v10 to force update
+const CACHE_NAME = 'trello-watcher-v11'; // Fixed #5: Updated version
 const urlsToCache = [
   './index.html',
   './manifest.json',
@@ -44,7 +44,6 @@ self.addEventListener('fetch', event => {
   event.respondWith(
     caches.match(event.request)
       .then(response => {
-        // Cache hit - return response
         if (response) {
           return response;
         }
