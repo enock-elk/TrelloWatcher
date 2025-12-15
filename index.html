@@ -1241,7 +1241,8 @@
                     body: `New card in ${listName}: ${cardName}`,
                     icon: 'icons/icon-192.png',
                     tag: 'trello-alert',
-                    renotify: true
+                    renotify: true,
+                    vibrate: [200, 100, 200] // <--- Add this line for better Android background vibration
                 });
             } catch(e) { console.log("Notification failed", e); }
         }
