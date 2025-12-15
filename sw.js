@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trello-watcher-v12'; // Updated to v12
+const CACHE_NAME = 'trello-watcher-v13'; // Updated to v13
 const urlsToCache = [
   './index.html',
   './manifest.json',
