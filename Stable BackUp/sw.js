@@ -1,24 +1,17 @@
-const CACHE_NAME = 'trello-watcher-v12'; // Updated to v12
+const CACHE_NAME = 'trello-watcher-v11'; // Fixed #5: Updated version
 const urlsToCache = [
   './index.html',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  // OLD SOUNDS
+  // CACHE THE SOUNDS so they work offline/instantly
   './sounds/bottle_opener.mp3',
   './sounds/carlock.mp3',
   './sounds/doorbell.mp3',
   './sounds/email_notification.mp3',
   './sounds/message_messaaaaaage.mp3',
   './sounds/message_my_lord.mp3',
-  './sounds/message_tone.mp3',
-  // NEW SOUNDS
-  './sounds/zap.mp3',
-  './sounds/just_calledf__k_u.mp3',
-  './sounds/ping.mp3',
-  './sounds/notification.mp3',
-  './sounds/sneeze.mp3',
-  './sounds/wahwahwahwahhh.mp3'
+  './sounds/message_tone.mp3'
 ];
 
 self.addEventListener('install', event => {
