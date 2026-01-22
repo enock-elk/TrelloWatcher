@@ -1,10 +1,42 @@
 <!DOCTYPE html>
+<!-- 
+  CHANGELOG (Guardian Edition)
+  --------------------------------------------------
+  v2.2 (2026-01-22):
+  - FEAT: Added Google Analytics 4 (GA4) integration.
+  - FEAT: Added User Identification (via Trello Profile).
+  - FEAT: Added Custom Events (Alert Type, Sounds, Bucket Count, Errors).
+  v2.1 (2026-01-22):
+  - REFACTOR: Moved polling logic to external Worker (js/worker.js).
+  - FEAT: Added "Smart Grid" layout (3 buckets per row, auto-center remainder).
+  - FEAT: Increased Max Bucket limit from 5 to 10.
+  - FEAT: Enhanced divider card filtering (Training, Innovation, etc.).
+  - FEAT: Added Microsoft Clarity analytics.
+-->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>TrelloWatcher</title>
     
+    <!-- GOOGLE ANALYTICS (GA4) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-L20DL17QMT"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-L20DL17QMT');
+    </script>
+
+    <!-- ANALYTICS (CLARITY) -->
+    <script type="text/javascript">
+        (function(c,l,a,r,i,t,y){
+            c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+            t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+            y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+        })(window, document, "clarity", "script", "v55mwqxtkt");
+    </script>
+
     <!-- PWA & ICON LINKS -->
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
@@ -236,13 +268,55 @@
             margin-right: 4px;
         }
 
-        .bucket-name-display {
-            font-size: 1rem;
-            font-weight: 700;
-            color: #fff;
-            line-height: 1.4;
-            margin-bottom: 5px;
+        /* SMART FLEXBOX GRID (3 items per row, centered last row) */
+        .bucket-grid {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center; /* Centers the last row */
+            gap: 10px;
+            width: 100%;
+            margin-top: 10px;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+        
+        .bucket-card {
+            background: rgba(255,255,255,0.07);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
             text-align: center;
+            transition: background 0.2s;
+            width: 31%; /* Fits 3 per row with gap */
+            min-width: 90px;
+            flex-grow: 0; /* Do not stretch to fill space */
+        }
+        .bucket-card:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .bucket-count {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: var(--accent);
+            line-height: 1;
+            margin-bottom: 3px;
+        }
+        
+        .bucket-name {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #cbd5e1;
+            line-height: 1.1;
+            word-break: break-word;
+            display: -webkit-box;
+            -webkit-line-clamp: 2; /* Truncate after 2 lines */
+            -webkit-box-orient: vertical;
+            overflow: hidden;
         }
 
         .stop-btn-styled {
@@ -581,7 +655,13 @@
             
             /* Compact monitor mobile adjustments */
             .monitor-header { margin-bottom: 8px; }
-            .bucket-name-display { font-size: 0.95rem; }
+            
+            /* Responsive Grid for mobile */
+            .bucket-grid {
+                grid-template-columns: 1fr 1fr; /* 2 col on mobile */
+                max-height: 35vh;
+            }
+            .bucket-card { width: 48%; } /* 2 per row */
         }
     </style>
 </head>
@@ -633,7 +713,7 @@
         <div class="subtitle">List Activity Monitor</div>
     </div>
 
-    <!-- STEP 0: LOGIN (NEW) -->
+    <!-- STEP 0: LOGIN -->
     <div id="loginSection" class="card login-card hidden">
         <div class="login-icon">🔐</div>
         <h2>Authentication Required</h2>
@@ -658,7 +738,7 @@
         <label>1. Select Board</label>
         <select id="boardSelect" onchange="handleBoardChange(this)"></select>
         
-        <label>2. Select Buckets (Max 5)</label>
+        <label>2. Select Buckets (Max 10)</label>
         <div class="list-grid" id="listCheckboxes">
             <div style="padding: 20px; text-align: center; color: var(--text-sub);">Select a board above.</div>
         </div>
@@ -748,9 +828,9 @@
             <span id="totalCards" class="counter-highlight">0</span> Cases in total in:
         </div>
 
-        <!-- Bottom: List Names -->
-        <div id="watchedListContainer" class="bucket-name-display">
-            <!-- List names will appear here -->
+        <!-- Bottom: NEW GRID LAYOUT -->
+        <div id="watchedListContainer" class="bucket-grid">
+            <!-- Grid items generated by JS -->
         </div>
     </div>
 
@@ -836,7 +916,7 @@
 <script>
     // --- APP CONSTANTS ---
     const API_KEY = '4a2f87929257d1557d800be137588c07'; // Public App Key
-    const MAX_BUCKETS = 5;
+    const MAX_BUCKETS = 10; // UPDATED LIMIT
     
     // --- STORAGE KEYS ---
     const PREF_TOKEN = 'watcher_trello_token';
@@ -845,94 +925,6 @@
     const PREF_MODE = 'watcher_mode';
     const PREF_TONE_WAKE = 'watcher_tone_wake';
     const PREF_TONE_NOTIFY = 'watcher_tone_notify';
-
-    // --- WORKER CODE (INLINED FOR SINGLE FILE) ---
-    // Fix #1: Moving polling logic to a Worker to avoid background throttling
-    const WORKER_SCRIPT_CONTENT = `
-        let intervalId = null;
-        let listStates = {}; 
-        let apiKey = '';
-        let token = '';
-
-        self.onmessage = async function(e) {
-            const { cmd, payload } = e.data;
-            if (cmd === 'start') {
-                apiKey = payload.apiKey;
-                token = payload.token;
-                const targets = payload.targets;
-                
-                // Clear old state just in case
-                if (intervalId) clearInterval(intervalId);
-                
-                startLoop(targets);
-            } else if (cmd === 'stop') {
-                if (intervalId) clearInterval(intervalId);
-                intervalId = null;
-                listStates = {};
-            }
-        };
-
-        async function trelloFetch(url) {
-            const response = await fetch(url + '?key=' + apiKey + '&token=' + token);
-            if (response.status === 401) throw new Error('Unauthorized');
-            if (!response.ok) throw new Error('API Error');
-            return await response.json();
-        }
-
-        async function startLoop(targets) {
-            // Initial Fetch to populate "seen" cards
-            let totalCards = 0;
-            for (const target of targets) {
-                try {
-                    const cards = await trelloFetch('https://api.trello.com/1/lists/' + target.id + '/cards');
-                    listStates[target.id] = new Set(cards.map(c => c.id));
-                    totalCards += cards.length;
-                } catch(e) {
-                    postMessage({ type: 'error', msg: e.message });
-                    if(e.message === 'Unauthorized') postMessage({ type: 'auth_fail' });
-                }
-            }
-            postMessage({ type: 'stats', total: totalCards });
-            postMessage({ type: 'log', msg: 'Worker started monitoring ' + targets.length + ' lists.' });
-
-            // Start Polling Loop
-            intervalId = setInterval(async () => {
-                let currentTotal = 0;
-                for (const target of targets) {
-                    try {
-                        const cards = await trelloFetch('https://api.trello.com/1/lists/' + target.id + '/cards');
-                        const currentSet = new Set(cards.map(c => c.id));
-                        const previousSet = listStates[target.id] || new Set();
-                        
-                        // Find new cards
-                        const newCards = cards.filter(c => !previousSet.has(c.id));
-                        
-                        // Update state
-                        listStates[target.id] = currentSet;
-                        currentTotal += currentSet.size;
-
-                        if (newCards.length > 0) {
-                            // Notify Main Thread
-                            postMessage({ 
-                                type: 'alarm', 
-                                cardName: newCards[0].name, 
-                                listName: target.name 
-                            });
-                            // We only trigger one alarm per cycle to avoid chaos
-                            break; 
-                        }
-                    } catch(e) {
-                         if(e.message === 'Unauthorized') {
-                             clearInterval(intervalId);
-                             postMessage({ type: 'auth_fail' });
-                             return;
-                         }
-                    }
-                }
-                postMessage({ type: 'stats', total: currentTotal });
-            }, 15000); 
-        }
-    `;
 
     // --- STATE VARIABLES ---
     let userToken = null;
@@ -946,6 +938,7 @@
     let alarmTimeout1 = null;
     let alarmTimeout2 = null;
     let alarmTimeout3 = null;
+    let currentUser = null; // Store Trello User Info
     
     // Custom Audio Variables
     let customAudioSource = null;
@@ -990,6 +983,9 @@
             localStorage.setItem(PREF_TOKEN, userToken);
             // Clean URL so token doesn't sit in history
             window.history.replaceState({}, document.title, window.location.pathname);
+            
+            // ANALYTICS: Track Login Event
+            gtag('event', 'login', { method: 'trello_oauth' });
         } else {
             userToken = localStorage.getItem(PREF_TOKEN);
         }
@@ -1004,7 +1000,6 @@
 
         // Service Worker Registration
         if ('serviceWorker' in navigator) {
-          // Fix #5: Better update handling logic for SW
           navigator.serviceWorker.register('./sw.js')
             .then(reg => {
                 console.log('SW Registered');
@@ -1013,8 +1008,6 @@
                    installingWorker.onstatechange = () => {
                      if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
                        log("New update available. Refresh to apply.", false);
-                       // Optional: Force reload if critical
-                       // window.location.reload(); 
                      }
                    };
                 };
@@ -1034,8 +1027,15 @@
     }
 
     function handleLogout() {
+        // ANALYTICS: Log logout
+        gtag('event', 'logout', {
+            event_category: 'User',
+            event_label: currentUser ? currentUser.fullName : 'Unknown'
+        });
+
         localStorage.removeItem(PREF_TOKEN);
         userToken = null;
+        currentUser = null;
         stopMonitoring();
         toggleSidebar();
         setupSection.classList.add('hidden');
@@ -1067,9 +1067,14 @@
         }
 
         try { 
+            await identifyUser(); // NEW: Identify user for Analytics
             await fetchBoards(); 
         } catch (e) { 
             log("Init Error: " + e.message, true);
+            gtag('event', 'error', { 
+                event_category: 'Initialization', 
+                event_label: e.message 
+            });
             if(e.message.includes('401') || e.message.includes('Unauthorized')) {
                 handleLogout();
                 showMessage("Session Expired", "Your Trello session expired. Please log in again.");
@@ -1077,13 +1082,32 @@
         }
     }
 
-    // --- TRELLO API (Initial Setup only - monitoring uses Worker) ---
+    // --- TRELLO API ---
     async function trelloFetchMain(url) {
         if (!userToken) throw new Error("No Token");
         const response = await fetch(`${url}?key=${API_KEY}&token=${userToken}`);
         if (response.status === 401) throw new Error('Unauthorized');
         if (!response.ok) throw new Error('API Error');
         return await response.json();
+    }
+
+    // NEW: Fetch User Profile
+    async function identifyUser() {
+        try {
+            const member = await trelloFetchMain('https://api.trello.com/1/members/me');
+            currentUser = member;
+            
+            // ANALYTICS: Set User ID
+            gtag('config', 'G-L20DL17QMT', {
+                'user_id': member.id
+            });
+            
+            // Log for debugging
+            console.log("Logged in as:", member.fullName);
+            
+        } catch(e) {
+            console.warn("Could not fetch user profile", e);
+        }
     }
 
     async function fetchBoards() {
@@ -1154,7 +1178,6 @@
         if (!audioCtx) audioCtx = new AudioContext();
         if (audioCtx.state === 'suspended') await audioCtx.resume();
         
-        // Fix #2: Request Notification Permission
         if ("Notification" in window && Notification.permission !== "granted") {
             Notification.requestPermission();
         }
@@ -1164,33 +1187,43 @@
 
         const targets = Array.from(checkboxes).map(cb => ({ id: cb.value, name: cb.getAttribute('data-name') }));
 
+        // ANALYTICS: Track Monitoring Start
+        gtag('event', 'start_monitoring', {
+            'board_id': boardId,
+            'bucket_count': targets.length,
+            'alert_mode': alertMode,
+            'alert_sound': toneSelect.value
+        });
+
         setupSection.classList.add('hidden');
         monitorSection.classList.remove('hidden');
         document.body.classList.add('monitoring-active');
         
-        // Fix #3: Safe Inner Text Rendering (Prevents XSS)
-        const container = document.getElementById('watchedListContainer');
-        container.innerHTML = ''; 
-        targets.forEach((t, index) => {
-            const span = document.createElement('span');
-            span.innerText = t.name;
-            container.appendChild(span);
-            if (index < targets.length - 1) {
-                container.appendChild(document.createTextNode(' & '));
-            }
-        });
+        // Initial Empty Render of Grid
+        renderBucketGrid(targets.map(t => ({...t, count: '-'})));
 
-        // Initialize Web Worker from Blob
-        const blob = new Blob([WORKER_SCRIPT_CONTENT], {type: 'application/javascript'});
-        worker = new Worker(URL.createObjectURL(blob));
+        // START EXTERNAL WORKER
+        worker = new Worker('js/worker.js');
         
         // Set up Worker Listeners
         worker.onmessage = (e) => {
             const data = e.data;
             if (data.type === 'log') log(data.msg);
-            else if (data.type === 'error') log("Error: " + data.msg, true);
+            
+            else if (data.type === 'error') {
+                log("Error: " + data.msg, true);
+                // ANALYTICS: Track Worker Errors
+                gtag('event', 'error', { 'event_category': 'Worker', 'event_label': data.msg });
+            }
+            
             else if (data.type === 'auth_fail') { stopMonitoring(); handleLogout(); }
-            else if (data.type === 'stats') { document.getElementById('totalCards').innerText = data.total; }
+            
+            // NEW: Receive Structured Buckets
+            else if (data.type === 'stats') { 
+                document.getElementById('totalCards').innerText = data.total;
+                if (data.buckets) renderBucketGrid(data.buckets);
+            }
+            
             else if (data.type === 'alarm') {
                 if (soundToggleActive.checked && !isAlarmPlaying) {
                     triggerAlarm(data.cardName, data.listName);
@@ -1205,6 +1238,22 @@
         });
 
         log(`Started monitoring: ${targets.map(t => t.name).join(', ')}`);
+    }
+
+    // --- NEW: RENDER GRID ---
+    function renderBucketGrid(buckets) {
+        const container = document.getElementById('watchedListContainer');
+        container.innerHTML = '';
+        
+        buckets.forEach(b => {
+            const card = document.createElement('div');
+            card.className = 'bucket-card';
+            card.innerHTML = `
+                <div class="bucket-count">${b.count}</div>
+                <div class="bucket-name">${b.name}</div>
+            `;
+            container.appendChild(card);
+        });
     }
 
     function stopMonitoring() {
@@ -1234,7 +1283,13 @@
         document.getElementById('alarmListName').innerText = listName;
         log(`ALARM: New card in ${listName}`);
 
-        // Fix #2 (Execution): Native Notification
+        // ANALYTICS: Track Alarm Trigger
+        gtag('event', 'alarm_triggered', {
+            'list_name': listName,
+            'alert_mode': alertMode,
+            'alert_sound': toneSelect.value
+        });
+
         if ("Notification" in window && Notification.permission === "granted" && document.visibilityState !== "visible") {
             try {
                 new Notification("Trello Alert!", {
@@ -1242,7 +1297,7 @@
                     icon: 'icons/icon-192.png',
                     tag: 'trello-alert',
                     renotify: true,
-                    vibrate: [200, 100, 200] // <--- Add this line for better Android background vibration
+                    vibrate: [200, 100, 200]
                 });
             } catch(e) { console.log("Notification failed", e); }
         }
@@ -1276,7 +1331,6 @@
     function playAudio(loop) {
         stopSoundOnly();
 
-        // Fix #4: Resurrection of Suspended AudioContext
         if (audioCtx && audioCtx.state === 'suspended') {
             audioCtx.resume().then(() => {
                // resumed
@@ -1302,7 +1356,6 @@
 
     function playSynth(loop) {
         try {
-            // Fix #4 (Backup): Resurrection in Synth
             if (audioCtx.state === 'suspended') audioCtx.resume();
 
             oscillator = audioCtx.createOscillator();
@@ -1418,7 +1471,7 @@
         // PRELOAD / CHECK SOUND
         if(value !== 'default' && value !== 'custom') {
             const tempAudio = new Audio(value);
-            tempAudio.load(); // Forces browser to fetch it now
+            tempAudio.load(); 
         }
     }
 
@@ -1456,6 +1509,12 @@
         else {
             isTesting = true;
             testBtn.innerText = "⏹"; testBtn.style.background = "var(--danger)";
+            
+            // ANALYTICS: Track Sound Test
+            gtag('event', 'sound_test', {
+                'sound_name': toneSelect.value
+            });
+
             const shouldLoop = (alertMode === 'wake');
             playAudio(shouldLoop);
             if (!shouldLoop) { setTimeout(() => { if(isTesting) { isTesting = false; testBtn.innerText = "▶"; testBtn.style.background = "var(--accent)"; } }, 4000); }
@@ -1475,6 +1534,12 @@
             let newTone = (mode === 'wake') ? (localStorage.getItem(PREF_TONE_WAKE) || 'default') : (localStorage.getItem(PREF_TONE_NOTIFY) || 'sounds/message_my_lord.mp3');
             toneSelect.value = newTone;
             updateToneUI(newTone);
+            
+            // ANALYTICS: Track Mode Change
+            gtag('event', 'mode_change', {
+                'new_mode': mode
+            });
+
             if(mode === 'notify' && !localStorage.getItem(PREF_TONE_NOTIFY)) localStorage.setItem(PREF_TONE_NOTIFY, 'sounds/message_my_lord.mp3');
         }
     }

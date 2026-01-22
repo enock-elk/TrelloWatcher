@@ -1,7 +1,9 @@
-const CACHE_NAME = 'trello-watcher-v13'; // Updated to v13
+const CACHE_NAME = 'trello-watcher-v14'; // Bumped version to force update
 const urlsToCache = [
+  './',
   './index.html',
   './manifest.json',
+  './js/worker.js', // CRITICAL ADDITION: The new "Brain" file
   './icons/icon-192.png',
   './icons/icon-512.png',
   // OLD SOUNDS
@@ -43,6 +45,9 @@ self.addEventListener('activate', event => {
           }
         })
       );
+    }).then(() => {
+        // CRITICAL: Take control of all pages immediately
+        return self.clients.claim();
     })
   );
 });
