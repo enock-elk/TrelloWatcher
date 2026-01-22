@@ -2,6 +2,14 @@
 <!-- 
   CHANGELOG (Guardian Edition)
   --------------------------------------------------
+  v2.5 (2026-01-22):
+  - FIX: "Stealth Mode" Audio Strategy. Changed Silent Noise to 30Hz Sine Wave.
+    Allows browser registration (Speaker Icon) without audible humming.
+  v2.4 (2026-01-22):
+  - FIX: Increased gain on "Silent Noise" to ensure browser 
+    registers audio activity (Speaker Icon visible).
+  v2.3 (2026-01-22):
+  - FIX: Added "Silent Noise" Keep-Alive strategy.
   v2.2 (2026-01-22):
   - FEAT: Added Google Analytics 4 (GA4) integration.
   - FEAT: Added User Identification (via Trello Profile).
@@ -944,6 +952,10 @@
     let customAudioSource = null;
     let customAudio = null;
 
+    // --- GUARDIAN: SILENT OSCILLATOR VARIABLES (Strategy A) ---
+    let silentOscillator = null;
+    let silentGain = null;
+
     // --- DOM ELEMENTS ---
     const loginSection = document.getElementById('loginSection');
     const loadingSection = document.getElementById('loadingSection');
@@ -1165,6 +1177,56 @@
         });
     }
 
+    // --- GUARDIAN: SILENT NOISE FUNCTIONS (STRATEGY A) ---
+    function startSilentNoise() {
+        try {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') {
+                 // We resume here, assuming this function is called after a user click
+                 audioCtx.resume();
+            }
+
+            // Create Oscillator
+            silentOscillator = audioCtx.createOscillator();
+            // CHANGE: Use sine for smoother, stealthy sound
+            silentOscillator.type = 'sine';
+            silentOscillator.frequency.value = 30; // 30Hz (Sub-bass, invisible to most speakers)
+
+            // Create Gain (Volume) Node
+            silentGain = audioCtx.createGain();
+            // CHANGE: 0.01 is loud enough for Chrome to show the speaker icon
+            silentGain.gain.value = 0.01; 
+
+            // Connect: Osc -> Gain -> Output
+            silentOscillator.connect(silentGain);
+            silentGain.connect(audioCtx.destination);
+
+            // Start immediately
+            silentOscillator.start();
+            log("Silent keep-alive active (Stealth Mode: 30Hz).");
+
+        } catch (e) {
+            console.error("Silent Noise Failed:", e);
+        }
+    }
+
+    function stopSilentNoise() {
+        try {
+            if (silentOscillator) {
+                silentOscillator.stop();
+                silentOscillator.disconnect();
+                silentOscillator = null;
+            }
+            if (silentGain) {
+                silentGain.disconnect();
+                silentGain = null;
+            }
+            log("Silent keep-alive stopped.");
+        } catch (e) {
+            console.error("Error stopping silent noise:", e);
+        }
+    }
+
     // --- MONITORING LOGIC ---
     async function startMonitoring() {
         const boardId = document.getElementById('boardSelect').value;
@@ -1184,6 +1246,9 @@
 
         showVolumeCheck();
         requestWakeLock();
+
+        // GUARDIAN: Start the Silent Noise Strategy
+        startSilentNoise();
 
         const targets = Array.from(checkboxes).map(cb => ({ id: cb.value, name: cb.getAttribute('data-name') }));
 
@@ -1262,6 +1327,10 @@
             worker.terminate();
             worker = null;
         }
+        
+        // GUARDIAN: Stop the Silent Noise Strategy
+        stopSilentNoise();
+
         monitorSection.classList.add('hidden');
         setupSection.classList.remove('hidden');
         document.body.classList.remove('monitoring-active');
