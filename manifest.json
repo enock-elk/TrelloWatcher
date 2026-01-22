@@ -1,5 +1,5 @@
 {
-  "name": "TrelloWatcher",
+  "name": "Trello Watcher",
   "short_name": "Trello Watcher",
   "start_url": "./index.html",
   "display": "standalone",
