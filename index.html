@@ -2,6 +2,11 @@
 <!-- 
   CHANGELOG (Guardian Edition)
   --------------------------------------------------
+  v2.6 (2026-04-07):
+  - FEAT: Added User Toggle for "Stealth Keep-Alive" in Sidebar.
+  - FIX: Resolved Android text-smearing/duplication scroll bug (Hardware Acceleration).
+  - FIX: Migrated mobile bucket view from Flexbox to CSS Grid for rigid 2-col layout.
+  - UI/UX: Increased mobile tap targets (Selects, Buttons, Checkboxes) and font-sizes to prevent iOS zoom.
   v2.5 (2026-01-22):
   - FIX: "Stealth Mode" Audio Strategy. Changed Silent Noise to 30Hz Sine Wave.
     Allows browser registration (Speaker Icon) without audible humming.
@@ -656,20 +661,34 @@
         .log-area { width: 100%; font-family: monospace; font-size: 0.8rem; color: var(--text-sub); margin-top: 20px; max-height: 100px; overflow-y: auto; opacity: 0.7; border-top: 1px solid var(--border); padding-top: 10px; text-shadow: 1px 1px 1px black; }
         .log-error { color: var(--danger); font-weight: bold; }
 
+        /* GUARDIAN: Mobile Specific Overrides */
         @media (max-width: 600px) {
             .clock-time { font-size: 3.5rem; }
             .clock-date { font-size: 1.1rem; }
             body.monitoring-active .bottom-controls { bottom: 140px; }
             
+            /* Fix overlap visual bug during scroll on Android Chrome */
+            .header-row h1, .header-row .subtitle { transform: translateZ(0); will-change: transform; }
+
             /* Compact monitor mobile adjustments */
-            .monitor-header { margin-bottom: 8px; }
+            .monitor-header { margin-bottom: 12px; }
             
-            /* Responsive Grid for mobile */
+            /* Responsive Grid for mobile: Changed to Strict Grid */
             .bucket-grid {
-                grid-template-columns: 1fr 1fr; /* 2 col on mobile */
+                display: grid;
+                grid-template-columns: 1fr 1fr; /* Rigid 2-column layout */
+                gap: 10px;
                 max-height: 35vh;
             }
-            .bucket-card { width: 48%; } /* 2 per row */
+            .bucket-card { width: auto; min-width: 0; padding: 12px 5px; } /* Reset width since grid handles sizing */
+            .bucket-count { font-size: 1.6rem; }
+            .bucket-name { font-size: 0.75rem; }
+
+            /* Touch Targets & Typography (Prevents iOS Zoom) */
+            select { font-size: 16px; padding: 16px; } 
+            .btn { padding: 18px; font-size: 1.1rem; }
+            .list-option { padding: 16px; }
+            .list-option input { transform: scale(1.4); margin-right: 15px; }
         }
     </style>
 </head>
@@ -691,6 +710,21 @@
     </div>
     <div class="menu-item" onclick="resetWallpaper()">
         <span>↺</span> Reset Defaults
+    </div>
+
+    <!-- NEW: STEALTH TOGGLE -->
+    <div class="sidebar-header" style="margin-top: 20px;">Advanced</div>
+    <div class="setting-row" style="flex-direction: column; align-items: flex-start; padding: 10px 5px; border-top: none;">
+        <div style="display:flex; justify-content: space-between; width: 100%; align-items: center; margin-bottom: 8px;">
+            <div style="font-size:0.9em; font-weight:600; color:var(--text-main);"><span>🤫</span> Stealth Keep-Alive</div>
+            <label class="switch">
+                <input type="checkbox" id="stealthToggle" checked onchange="handleStealthToggle(this)">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div style="font-size:0.75rem; color:var(--text-sub); line-height:1.4;">
+            Plays a silent 30Hz tone. Prevents the browser from pausing the app while in the background.
+        </div>
     </div>
 
     <!-- LOGOUT BUTTON -->
@@ -986,6 +1020,12 @@
     window.onload = async () => {
         initVisuals();
         
+        // GUARDIAN: Initialize Stealth Toggle State from localStorage
+        const savedStealth = localStorage.getItem('watcher_stealth');
+        if (savedStealth === 'false') {
+            document.getElementById('stealthToggle').checked = false;
+        }
+
         // Check for token in URL (redirect from Trello)
         const hash = window.location.hash.substring(1);
         const params = new URLSearchParams(hash);
@@ -1178,7 +1218,25 @@
     }
 
     // --- GUARDIAN: SILENT NOISE FUNCTIONS (STRATEGY A) ---
+    function handleStealthToggle(checkbox) {
+        const isEnabled = checkbox.checked;
+        localStorage.setItem('watcher_stealth', isEnabled);
+        
+        if (!isEnabled) {
+            stopSilentNoise();
+        } else if (document.body.classList.contains('monitoring-active')) {
+            startSilentNoise();
+        }
+    }
+
     function startSilentNoise() {
+        // GUARDIAN: Check User Preference First
+        const isStealthEnabled = document.getElementById('stealthToggle').checked;
+        if (!isStealthEnabled) {
+            log("Stealth Keep-Alive is disabled in preferences. Skipping.");
+            return;
+        }
+
         try {
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             if (audioCtx.state === 'suspended') {
@@ -1247,7 +1305,7 @@
         showVolumeCheck();
         requestWakeLock();
 
-        // GUARDIAN: Start the Silent Noise Strategy
+        // GUARDIAN: Attempt to Start the Silent Noise Strategy
         startSilentNoise();
 
         const targets = Array.from(checkboxes).map(cb => ({ id: cb.value, name: cb.getAttribute('data-name') }));

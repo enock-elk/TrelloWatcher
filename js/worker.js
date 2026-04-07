@@ -47,10 +47,21 @@ function shouldIgnore(cardName) {
     if (!cardName) return true;
     const cleanName = cardName.trim().toLowerCase();
     
-    // Check if name contains any of the keywords
-    return IGNORED_KEYWORDS.some(keyword => 
+    // 1. Existing logic: Check if name contains any of the basic keywords
+    const hasBasicKeyword = IGNORED_KEYWORDS.some(keyword => 
         cleanName.includes(keyword.toLowerCase())
     );
+    if (hasBasicKeyword) return true;
+
+    // 2. New Regex Logic (GUARDIAN UPDATE)
+    // - /test/i matches "Test", "test", "TESTing", etc.
+    // - /ignore/i matches "Ignore", "ignore", "(Ignore)", etc.
+    // - /\bdemo\b/i matches "Demo" as a standalone word (e.g., "(Demo) EL Kazembe"), but NOT "Demolition"
+    if (/test/i.test(cardName)) return true;
+    if (/ignore/i.test(cardName)) return true;
+    if (/\bdemo\b/i.test(cardName)) return true;
+
+    return false;
 }
 
 async function trelloFetch(url) {
