@@ -2,7 +2,9 @@
 <!-- 
   CHANGELOG (Guardian Edition)
   --------------------------------------------------
-  v3.1 (2026-04-07):
+  v2.7 (2026-04-07):
+  - UI/UX: Compressed mobile bucket grid cards to save vertical screen space.
+  v2.6 (2026-04-07):
   - FEAT: Added User Toggle for "Stealth Keep-Alive" in Sidebar.
   - FIX: Resolved Android text-smearing/duplication scroll bug (Hardware Acceleration).
   - FIX: Migrated mobile bucket view from Flexbox to CSS Grid for rigid 2-col layout.
@@ -673,16 +675,16 @@
             /* Compact monitor mobile adjustments */
             .monitor-header { margin-bottom: 12px; }
             
-            /* Responsive Grid for mobile: Changed to Strict Grid */
+            /* Responsive Grid for mobile: Rigid 2-col layout with Compressed Vertical Height */
             .bucket-grid {
                 display: grid;
                 grid-template-columns: 1fr 1fr; /* Rigid 2-column layout */
-                gap: 10px;
+                gap: 8px; /* Slightly tighter gap */
                 max-height: 35vh;
             }
-            .bucket-card { width: auto; min-width: 0; padding: 12px 5px; } /* Reset width since grid handles sizing */
-            .bucket-count { font-size: 1.6rem; }
-            .bucket-name { font-size: 0.75rem; }
+            .bucket-card { width: auto; min-width: 0; padding: 6px 4px; } /* COMPRESSED VERTICAL PADDING */
+            .bucket-count { font-size: 1.3rem; margin-bottom: 2px; line-height: 1; } /* COMPRESSED NUMBER */
+            .bucket-name { font-size: 0.7rem; line-height: 1.1; margin-top: 0; } /* COMPRESSED TEXT */
 
             /* Touch Targets & Typography (Prevents iOS Zoom) */
             select { font-size: 16px; padding: 16px; } 

@@ -1,4 +1,4 @@
-// TRELLO WATCHER - WEB WORKER (V2.1)
+// TRELLO WATCHER - WEB WORKER (V2.2)
 // Handles polling, filtering, and state management off the main thread.
 
 let intervalId = null;
