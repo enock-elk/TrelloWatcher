@@ -1,4 +1,4 @@
-// TRELLO WATCHER - WEB WORKER (V2.2)
+// TRELLO WATCHER - WEB WORKER (V2.1)
 // Handles polling, filtering, and state management off the main thread.
 
 let intervalId = null;
@@ -82,53 +82,68 @@ async function startLoop(targets) {
         let bucketStats = [];
         let alarmTriggered = false;
 
-        for (const target of targets) {
+        // GUARDIAN FIX: Concurrent fetching to eliminate API waterfall delays
+        const fetchPromises = targets.map(async (target) => {
             try {
                 const rawCards = await trelloFetch(`https://api.trello.com/1/lists/${target.id}/cards`);
-                
-                // 1. FILTER: Remove Divider Cards based on Keywords
-                const activeCards = rawCards.filter(c => !shouldIgnore(c.name));
-                
-                // 2. STATE: Map current IDs
-                const currentSet = new Set(activeCards.map(c => c.id));
-                const previousSet = listStates[target.id] || new Set();
+                return { success: true, target: target, rawCards: rawCards };
+            } catch (error) {
+                return { success: false, target: target, error: error };
+            }
+        });
 
-                // 3. DETECT NEW: Only if not first run (avoid alarm bomb on startup)
-                if (!isFirstRun && !alarmTriggered) {
-                    // Check for IDs that weren't there before
-                    const newCard = activeCards.find(c => !previousSet.has(c.id));
-                    
-                    if (newCard) {
-                        postMessage({ 
-                            type: 'alarm', 
-                            cardName: newCard.name, 
-                            listName: target.name 
-                        });
-                        alarmTriggered = true; // One alarm per cycle max
-                    }
-                }
+        // Wait for all lists to return simultaneously
+        const results = await Promise.all(fetchPromises);
 
-                // 4. UPDATE STATE
-                listStates[target.id] = currentSet;
-                
-                // 5. GATHER STATS
-                const count = currentSet.size;
-                globalTotal += count;
-                bucketStats.push({
-                    id: target.id,
-                    name: target.name,
-                    count: count
-                });
-
-            } catch (e) {
-                if (e.message === 'Unauthorized') {
+        // Process results sequentially to maintain the original UI grid order
+        for (const result of results) {
+            if (!result.success) {
+                if (result.error.message === 'Unauthorized') {
                     clearInterval(intervalId);
                     postMessage({ type: 'auth_fail' });
-                    return;
+                    return; // Abort cycle
                 }
                 // Log non-critical errors but keep going
-                postMessage({ type: 'log', msg: `Sync error on ${target.name}: ${e.message}`, isError: true });
+                postMessage({ type: 'log', msg: `Sync error on ${result.target.name}: ${result.error.message}`, isError: true });
+                continue;
             }
+
+            const target = result.target;
+            const rawCards = result.rawCards;
+
+            // 1. FILTER: Remove Divider Cards based on Keywords
+            const activeCards = rawCards.filter(c => !shouldIgnore(c.name));
+            
+            // 2. STATE: Map current IDs
+            const currentSet = new Set(activeCards.map(c => c.id));
+            const previousSet = listStates[target.id] || new Set();
+
+            // 3. DETECT NEW: Only if not first run (avoid alarm bomb on startup)
+            if (!isFirstRun && !alarmTriggered) {
+                // Check for IDs that weren't there before
+                const newCard = activeCards.find(c => !previousSet.has(c.id));
+                
+                if (newCard) {
+                    postMessage({ 
+                        type: 'alarm', 
+                        cardName: newCard.name, 
+                        listName: target.name 
+                    });
+                    alarmTriggered = true; // One alarm per cycle max
+                }
+            }
+
+            // 4. UPDATE STATE
+            listStates[target.id] = currentSet;
+            
+            // 5. GATHER STATS
+            const count = currentSet.size;
+            globalTotal += count;
+            bucketStats.push({
+                id: target.id,
+                name: target.name,
+                count: count
+            });
         }
 
         // Send Snapshot to Main Thread

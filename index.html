@@ -2,6 +2,8 @@
 <!-- 
   CHANGELOG (Guardian Edition)
   --------------------------------------------------
+  v2.8 (2026-04-08):
+  - PERF: Eliminated "Waterfall" API delay on startup. identifyUser and fetchBoards now run concurrently.
   v2.7 (2026-04-07):
   - UI/UX: Compressed mobile bucket grid cards to save vertical screen space.
   v2.6 (2026-04-07):
@@ -1121,8 +1123,11 @@
         }
 
         try { 
-            await identifyUser(); // NEW: Identify user for Analytics
-            await fetchBoards(); 
+            // GUARDIAN: Execute API calls concurrently to fix the "Waterfall" loading delay
+            await Promise.all([
+                identifyUser(),
+                fetchBoards()
+            ]);
         } catch (e) { 
             log("Init Error: " + e.message, true);
             gtag('event', 'error', { 

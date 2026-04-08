@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trello-watcher-v18'; // Bumped version to force update
+const CACHE_NAME = 'trello-watcher-v19'; // Bumped version to force update
 const urlsToCache = [
   './',
   './index.html',
